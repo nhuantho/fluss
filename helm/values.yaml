@@ -27,12 +27,99 @@ image:
   pullPolicy: IfNotPresent
   pullSecrets: []
 
-appConfig:
-  internalPort: 9123
-  externalPort: 9124
+# Select certain nodes for Fluss pods.
+nodeSelector: {}
+affinity: {}
+tolerations: []
+
+# Add common labels to all objects and pods defined in this chart.
+labels: {}
+
+# Coordinator Server Config
+coordinatorServer:
+  # Number of coordinator servers in the deployment
+  replicas: 1
+  ## Configure extra options for coordinator server containers' liveness, readiness and startup probes
+  ## ref: https://kubernetes.io/docs/tasks/configure-pod-container/configure-liveness-readiness-startup-probes/#configure-probes
+  # If the coordinator server stops heartbeating for 6 minutes (100*3s),
+  # kill the coordinator server and let Kubernetes restart it
+  livenessProbe:
+    enabled: true
+    initialDelaySeconds: 10
+    periodSeconds: 3
+    timeoutSeconds: 1
+    successThreshold: 1
+    failureThreshold: 100
+  # If the coordinator server are temporarily unable to serve traffic for 6 minutes (100*3s),
+  # mark not ready the coordinator server and don't send it requests
+  readinessProbe:
+    enabled: true
+    initialDelaySeconds: 10
+    periodSeconds: 3
+    timeoutSeconds: 1
+    successThreshold: 1
+    failureThreshold: 100
+
+  resources: {}
+    # limits:
+    #   cpu: 100m
+    #   memory: 128Mi
+    # requests:
+    #   cpu: 100m
+    #   memory: 128Mi
+
+  persistence:
+    enabled: false
+    size: 1Gi
+    storageClass:
+
+# Tablet Server Config
+tabletServer:
+  # Number of tablet servers in the deployment
+  replicas: 3
+  ## Configure extra options for tablet server containers' liveness, readiness and startup probes
+  ## ref: https://kubernetes.io/docs/tasks/configure-pod-container/configure-liveness-readiness-startup-probes/#configure-probes
+  # If the tablet server stops heartbeating for 6 minutes (100*3s),
+  # kill the tablet server and let Kubernetes restart it
+  livenessProbe:
+    failureThreshold: 100
+    timeoutSeconds: 1
+    initialDelaySeconds: 10
+    periodSeconds: 3
+  # If the coordinator server are temporarily unable to serve traffic for 6 minutes (100*3s),
+  # mark not ready the coordinator server and don't send it requests
+  readinessProbe:
+    failureThreshold: 100
+    timeoutSeconds: 1
+    initialDelaySeconds: 10
+    periodSeconds: 3
+
+  resources: {}
+    # limits:
+    #   cpu: 100m
+    #   memory: 128Mi
+    # requests:
+    #   cpu: 100m
+    #   memory: 128Mi
+
+  persistence:
+    enabled: false
+    size: 10Gi
+    storageClass:
+
+# Service parameters
+service:
+  # @param service.ports.internal Fluss svc port for internal connections
+  # @param service.ports.client Fluss svc port for client connections
+  ports:
+    internal: 9123
+    client: 9124
+
 
 
 # Fluss server configuration options
+# Config settings to go into the mounted conf/server.yaml
+# See more at https://fluss.apache.org/docs/maintenance/configuration/
 configurationOverrides:
   default.bucket.number: 3
   default.replication.factor: 3
@@ -41,28 +128,3 @@ configurationOverrides:
   remote.data.dir: /tmp/fluss/remote-data
   data.dir: /tmp/fluss/data
   internal.listener.name: INTERNAL
-
-persistence:
-  enabled: false
-  size: 1Gi
-  storageClass:
-
-resources: {}
-  # We usually recommend not to specify default resources and to leave this as a conscious
-  # choice for the user. This also increases chances charts run on environments with little
-  # resources, such as Minikube. If you do want to specify resources, uncomment the following
-  # lines, adjust them as necessary, and remove the curly braces after 'resources:'.
-  # coordinatorServer:
-  #   limits:
-  #     cpu: 100m
-  #     memory: 128Mi
-  #   requests:
-  #     cpu: 100m
-  #     memory: 128Mi
-  # tabletServer:
-  #   requests:
-  #     cpu: 100m
-  #     memory: 128Mi
-  #   limits:
-  #     cpu: 100m
-  #     memory: 128Mi
