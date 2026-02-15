@@ -29,13 +29,18 @@ import org.apache.fluss.row.InternalRow;
 import org.apache.fluss.server.testutils.FlussClusterExtension;
 import org.apache.fluss.utils.clock.ManualClock;
 
+import org.apache.flink.configuration.CheckpointingOptions;
+import org.apache.flink.configuration.MemorySize;
+import org.apache.flink.configuration.StateBackendOptions;
 import org.apache.flink.core.execution.SavepointFormatType;
+import org.apache.flink.runtime.testutils.MiniClusterResourceConfiguration;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
 import org.apache.flink.table.api.EnvironmentSettings;
 import org.apache.flink.table.api.TableResult;
 import org.apache.flink.table.api.bridge.java.StreamTableEnvironment;
 import org.apache.flink.table.api.config.ExecutionConfigOptions;
 import org.apache.flink.test.util.AbstractTestBase;
+import org.apache.flink.test.util.MiniClusterWithClientResource;
 import org.apache.flink.types.Row;
 import org.apache.flink.util.CloseableIterator;
 import org.junit.jupiter.api.AfterEach;
@@ -65,6 +70,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 abstract class ChangelogVirtualTableITCase extends AbstractTestBase {
 
     protected static final ManualClock CLOCK = new ManualClock();
+    @TempDir public static File checkpointDir;
     @TempDir public static File savepointDir;
 
     @RegisterExtension
@@ -81,6 +87,7 @@ abstract class ChangelogVirtualTableITCase extends AbstractTestBase {
     protected StreamTableEnvironment tEnv;
     protected static Connection conn;
     protected static Admin admin;
+    MiniClusterWithClientResource cluster;
 
     protected static Configuration clientConf;
 
@@ -92,7 +99,16 @@ abstract class ChangelogVirtualTableITCase extends AbstractTestBase {
     }
 
     @BeforeEach
-    void before() {
+    void before() throws Exception {
+        cluster =
+                new MiniClusterWithClientResource(
+                        new MiniClusterResourceConfiguration.Builder()
+                                .setConfiguration(getFileBasedCheckpointsConfig(savepointDir))
+                                .setNumberTaskManagers(2)
+                                .setNumberSlotsPerTaskManager(2)
+                                .build());
+        cluster.before();
+
         // Initialize Flink environment
         tEnv = initTableEnvironment(null);
         // reset clock before each test
@@ -100,9 +116,11 @@ abstract class ChangelogVirtualTableITCase extends AbstractTestBase {
     }
 
     @AfterEach
-    void after() {
+    void after() throws Exception {
         tEnv.useDatabase(BUILTIN_DATABASE);
         tEnv.executeSql(String.format("drop database %s cascade", DEFAULT_DB));
+        cluster.after();
+        conn.close();
     }
 
     // init table environment from savepointPath
@@ -507,5 +525,21 @@ abstract class ChangelogVirtualTableITCase extends AbstractTestBase {
                         "+I[update_after, 1, Item-1-Updated, us]");
 
         rowIter.close();
+    }
+
+    private static org.apache.flink.configuration.Configuration getFileBasedCheckpointsConfig(
+            File savepointDir) {
+        return getFileBasedCheckpointsConfig(savepointDir.toURI().toString());
+    }
+
+    private static org.apache.flink.configuration.Configuration getFileBasedCheckpointsConfig(
+            final String savepointDir) {
+        final org.apache.flink.configuration.Configuration config =
+                new org.apache.flink.configuration.Configuration();
+        config.set(StateBackendOptions.STATE_BACKEND, "hashmap");
+        config.set(CheckpointingOptions.CHECKPOINTS_DIRECTORY, checkpointDir.toURI().toString());
+        config.set(CheckpointingOptions.FS_SMALL_FILE_THRESHOLD, MemorySize.ZERO);
+        config.set(CheckpointingOptions.SAVEPOINT_DIRECTORY, savepointDir);
+        return config;
     }
 }
