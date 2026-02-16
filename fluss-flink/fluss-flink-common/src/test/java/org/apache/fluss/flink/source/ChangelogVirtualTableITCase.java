@@ -29,6 +29,7 @@ import org.apache.fluss.row.InternalRow;
 import org.apache.fluss.server.testutils.FlussClusterExtension;
 import org.apache.fluss.utils.clock.ManualClock;
 
+import org.apache.flink.api.common.JobID;
 import org.apache.flink.configuration.CheckpointingOptions;
 import org.apache.flink.configuration.MemorySize;
 import org.apache.flink.configuration.StateBackendOptions;
@@ -43,6 +44,7 @@ import org.apache.flink.test.util.AbstractTestBase;
 import org.apache.flink.test.util.MiniClusterWithClientResource;
 import org.apache.flink.types.Row;
 import org.apache.flink.util.CloseableIterator;
+import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
@@ -59,6 +61,7 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 
+import static org.apache.flink.runtime.testutils.CommonTestUtils.waitUntilCondition;
 import static org.apache.fluss.flink.FlinkConnectorOptions.BOOTSTRAP_SERVERS;
 import static org.apache.fluss.flink.source.testutils.FlinkRowAssertionsUtils.collectRowsWithTimeout;
 import static org.apache.fluss.flink.utils.FlinkTestBase.writeRows;
@@ -87,19 +90,12 @@ abstract class ChangelogVirtualTableITCase extends AbstractTestBase {
     protected StreamTableEnvironment tEnv;
     protected static Connection conn;
     protected static Admin admin;
-    MiniClusterWithClientResource cluster;
+    static MiniClusterWithClientResource cluster;
 
     protected static Configuration clientConf;
 
     @BeforeAll
-    protected static void beforeAll() {
-        clientConf = FLUSS_CLUSTER_EXTENSION.getClientConfig();
-        conn = ConnectionFactory.createConnection(clientConf);
-        admin = conn.getAdmin();
-    }
-
-    @BeforeEach
-    void before() throws Exception {
+    protected static void beforeAll() throws Exception {
         cluster =
                 new MiniClusterWithClientResource(
                         new MiniClusterResourceConfiguration.Builder()
@@ -108,7 +104,13 @@ abstract class ChangelogVirtualTableITCase extends AbstractTestBase {
                                 .setNumberSlotsPerTaskManager(2)
                                 .build());
         cluster.before();
+        clientConf = FLUSS_CLUSTER_EXTENSION.getClientConfig();
+        conn = ConnectionFactory.createConnection(clientConf);
+        admin = conn.getAdmin();
+    }
 
+    @BeforeEach
+    void before() {
         // Initialize Flink environment
         tEnv = initTableEnvironment(null);
         // reset clock before each test
@@ -119,6 +121,11 @@ abstract class ChangelogVirtualTableITCase extends AbstractTestBase {
     void after() throws Exception {
         tEnv.useDatabase(BUILTIN_DATABASE);
         tEnv.executeSql(String.format("drop database %s cascade", DEFAULT_DB));
+    }
+
+    @AfterAll
+    protected static void afterAll() throws Exception {
+        admin.close();
         cluster.after();
         conn.close();
     }
@@ -133,6 +140,7 @@ abstract class ChangelogVirtualTableITCase extends AbstractTestBase {
         StreamExecutionEnvironment execEnv =
                 StreamExecutionEnvironment.getExecutionEnvironment(conf);
         execEnv.setParallelism(1);
+        execEnv.enableCheckpointing(1000);
         StreamTableEnvironment tEnv =
                 StreamTableEnvironment.create(execEnv, EnvironmentSettings.inStreamingMode());
         String bootstrapServers = String.join(",", clientConf.get(ConfigOptions.BOOTSTRAP_SERVERS));
@@ -449,6 +457,9 @@ abstract class ChangelogVirtualTableITCase extends AbstractTestBase {
                         "INSERT INTO result_table SELECT id, name FROM source_table$changelog "
                                 + optionsLatest);
 
+        // Wait for at least one checkpoint to complete before creating savepoint
+        waitForCheckpoint(insertResult.getJobClient().get().getJobID());
+
         CloseableIterator<Row> rowIterLatest =
                 tEnv.executeSql("SELECT * FROM result_table").collect();
 
@@ -541,5 +552,20 @@ abstract class ChangelogVirtualTableITCase extends AbstractTestBase {
         config.set(CheckpointingOptions.FS_SMALL_FILE_THRESHOLD, MemorySize.ZERO);
         config.set(CheckpointingOptions.SAVEPOINT_DIRECTORY, savepointDir);
         return config;
+    }
+
+    private static void waitForCheckpoint(JobID jobId) throws Exception {
+        String jobIdStr = jobId.toHexString();
+        waitUntilCondition(
+                () -> {
+                    File jobCheckpointDir = new File(checkpointDir, jobIdStr);
+                    if (!jobCheckpointDir.exists()) {
+                        return false;
+                    }
+                    File[] checkpoints =
+                            jobCheckpointDir.listFiles(
+                                    f -> f.isDirectory() && f.getName().startsWith("chk-"));
+                    return checkpoints != null && checkpoints.length > 0;
+                });
     }
 }
