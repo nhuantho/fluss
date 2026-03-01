@@ -43,7 +43,8 @@ import org.apache.flink.table.api.config.ExecutionConfigOptions;
 import org.apache.flink.test.util.MiniClusterWithClientResource;
 import org.apache.flink.types.Row;
 import org.apache.flink.util.CloseableIterator;
-import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.RegisterExtension;
@@ -84,13 +85,13 @@ abstract class ChangelogVirtualTableITCase {
     static final String DEFAULT_DB = "test_changelog_db";
     protected StreamExecutionEnvironment execEnv;
     protected StreamTableEnvironment tEnv;
-    protected Connection conn;
-    protected Admin admin;
-    protected Configuration clientConf;
-    protected MiniClusterWithClientResource cluster;
+    protected static Connection conn;
+    protected static Admin admin;
+    protected static Configuration clientConf;
+    protected static MiniClusterWithClientResource cluster;
 
-    @BeforeEach
-    protected void beforeEach() throws Exception {
+    @BeforeAll
+    public static void beforeAll() throws Exception {
         clientConf = FLUSS_CLUSTER_EXTENSION.getClientConfig();
         conn = ConnectionFactory.createConnection(clientConf);
         admin = conn.getAdmin();
@@ -103,15 +104,18 @@ abstract class ChangelogVirtualTableITCase {
                                 .setNumberSlotsPerTaskManager(2)
                                 .build());
         cluster.before();
+    }
 
+    @BeforeEach
+    protected void beforeEach() throws Exception {
         // Initialize Flink environment
         tEnv = initTableEnvironment(null);
         // reset clock before each test
         CLOCK.advanceTime(-CLOCK.milliseconds(), TimeUnit.MILLISECONDS);
     }
 
-    @AfterEach
-    protected void afterEach() throws Exception {
+    @AfterAll
+    public static void afterAll() throws Exception {
         if (cluster != null) {
             cluster.after();
             cluster = null;
@@ -122,7 +126,6 @@ abstract class ChangelogVirtualTableITCase {
         }
         if (conn != null) {
             conn.close();
-            conn = null;
         }
     }
 
